@@ -2,6 +2,14 @@
 
 A polygon and polyline editor for Flutter Map applications. This package provides interactive editing functionality that allows users to create, edit, and manipulate polygons and polylines directly on maps.
 
+## Demo
+
+### Polygon Editing
+![Polygon Editor Demo](assets/polygon-optimized.gif)
+
+### Polyline Editing  
+![Polyline Editor Demo](assets/polyline-optimized.gif)
+
 ## Installation
 
 Add this to your package's `pubspec.yaml` file:

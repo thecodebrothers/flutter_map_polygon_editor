@@ -1,9 +1,10 @@
 name: polygon_editor_example
 description: "Example app demonstrating flutter_map_polygon_editor package."
-version: 1.0.0+1
+version: 1.0.1+1
 
 environment:
-  sdk: ^3.8.1
+  sdk: ">=3.6.0 <4.0.0"
+  flutter: ">=3.27.0"
 
 dependencies:
   flutter:
