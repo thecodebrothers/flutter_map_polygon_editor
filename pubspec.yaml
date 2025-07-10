@@ -1,6 +1,6 @@
 name: flutter_map_polygon_editor
 description: Polygon and polyline editor for Flutter Map with drag markers and customizable styling.
-version: 0.1.1
+version: 0.1.2
 homepage: https://github.com/tdz4/flutter_map_polygon_editor
 repository: https://github.com/tdz4/flutter_map_polygon_editor
 
