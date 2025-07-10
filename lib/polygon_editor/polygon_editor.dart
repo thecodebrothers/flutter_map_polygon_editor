@@ -274,7 +274,7 @@ class _PolygonEditorState extends State<PolygonEditor> {
     return DragMarker(
       key: Key('midpoint_$index'),
       point: point,
-      size: const Size(20, 20), // Default size, overridden by builder
+      size: widget.style.midpointSize,
       onDragUpdate: (details, point) {
         _midpoints[index] = point;
         _throttleUpdateInterleavedPoints();
@@ -303,7 +303,7 @@ class _PolygonEditorState extends State<PolygonEditor> {
     return DragMarker(
       key: Key('point_$index'),
       point: point,
-      size: const Size(24, 24), // Default size, overridden by builder
+      size: widget.style.pointSize,
       onLongPress: (latLng) {
         widget.controller.removePoint(index);
       },

@@ -17,8 +17,6 @@ class DefaultPointMarker extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 24,
-      height: 24,
       decoration: BoxDecoration(
         color: isDragging ? Colors.blue.shade700 : Colors.blue,
         shape: BoxShape.circle,
@@ -52,8 +50,6 @@ class DefaultMidpointMarker extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 20,
-      height: 20,
       decoration: BoxDecoration(
         color: isDragging ? Colors.green.shade700 : Colors.green,
         shape: BoxShape.circle,
