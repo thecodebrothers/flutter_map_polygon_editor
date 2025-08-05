@@ -1,4 +1,3 @@
-import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_map_dragmarker/flutter_map_dragmarker.dart';
@@ -8,15 +7,16 @@ import 'default_markers.dart';
 import 'polygon_editor_controller.dart';
 import 'polygon_editor_style.dart';
 
-/// Interactive polygon and polyline editor for Flutter Map.
+/// Interactive polygon editor for Flutter Map.
 ///
-/// Allows users to create and edit polygons and polylines by dragging markers
-/// on the map. Supports both closed polygons and open polylines with
-/// customizable styling and marker builders.
+/// Allows users to create and edit polygons with a two-stage process:
+/// 1. Creation mode: Click to add points, with a line following the cursor
+/// 2. Editing mode: Drag existing points and midpoints to modify the polygon
 ///
 /// ```dart
 /// class _MapPageState extends State<MapPage> {
 ///   late final PolygonEditorController _controller;
+///   final ValueNotifier<LatLng?> _cursorPosition = ValueNotifier(null);
 ///
 ///   @override
 ///   void initState() {
@@ -27,16 +27,33 @@ import 'polygon_editor_style.dart';
 ///   @override
 ///   void dispose() {
 ///     _controller.dispose();
+///     _cursorPosition.dispose();
 ///     super.dispose();
 ///   }
 ///
 ///   @override
 ///   Widget build(BuildContext context) {
 ///     return FlutterMap(
+///       options: MapOptions(
+///         onTap: (tapPosition, latLng) {
+///           if (_controller.state == PolygonEditingState.creating) {
+///             _controller.addPoint(latLng);
+///           }
+///         },
+///         onPointerMove: (pointerEvent, latLng) {
+///           if (_controller.state == PolygonEditingState.creating) {
+///             _cursorPosition.value = latLng;
+///           }
+///         },
+///         onPointerExit: (pointerEvent, latLng) {
+///           _cursorPosition.value = null;
+///         },
+///       ),
 ///       children: [
 ///         TileLayer(urlTemplate: '...'),
 ///         PolygonEditor(
 ///           controller: _controller,
+///           cursorPosition: _cursorPosition,
 ///           style: PolygonEditorStyle(
 ///             borderColor: Colors.blue,
 ///             fillColor: Colors.blue.withOpacity(0.3),
@@ -50,6 +67,7 @@ import 'polygon_editor_style.dart';
 class PolygonEditor extends StatefulWidget {
   const PolygonEditor({
     required this.controller,
+    this.cursorPosition,
     this.pointBuilder,
     this.midpointBuilder,
     this.style = const PolygonEditorStyle(),
@@ -57,22 +75,25 @@ class PolygonEditor extends StatefulWidget {
     super.key,
   });
 
-  /// The controller that manages the polygon/polyline data and editing operations.
+  /// The controller that manages the polygon data and editing operations.
   final PolygonEditorController controller;
+
+  /// Cursor position notifier for drawing the line to mouse cursor during creation.
+  final ValueNotifier<LatLng?>? cursorPosition;
 
   /// Custom builder for point markers. If null, uses [defaultPointBuilder].
   ///
-  /// The builder receives the context, position, and drag state of the marker.
-  final Widget Function(BuildContext context, LatLng position, bool isDragging)?
-  pointBuilder;
+  /// The builder receives the context, position, drag state, and start point flag.
+  final Widget Function(BuildContext context, LatLng position, bool isDragging,
+      bool isStartPoint)? pointBuilder;
 
   /// Custom builder for midpoint markers. If null, uses [defaultMidpointBuilder].
   ///
   /// The builder receives the context, position, and drag state of the marker.
   final Widget Function(BuildContext context, LatLng position, bool isDragging)?
-  midpointBuilder;
+      midpointBuilder;
 
-  /// The visual styling configuration for the polygon/polyline.
+  /// The visual styling configuration for the polygon.
   final PolygonEditorStyle style;
 
   /// Throttling duration for midpoint drag updates. Defaults to 16ms.
@@ -87,13 +108,10 @@ class _PolygonEditorState extends State<PolygonEditor> {
   // State variables
   List<LatLng> _midpoints = [];
   late final ValueNotifier<bool> _showMidpoints;
-  late final ValueNotifier<List<LatLng>> _interleavedPoints;
-  DateTime? _polygonLastUpdatedAt;
 
   @override
   void initState() {
     super.initState();
-    _interleavedPoints = ValueNotifier([]);
     _showMidpoints = ValueNotifier(true);
     widget.controller.addListener(_onPointsChanged);
     _onPointsChanged();
@@ -103,7 +121,6 @@ class _PolygonEditorState extends State<PolygonEditor> {
   void dispose() {
     widget.controller.removeListener(_onPointsChanged);
     _showMidpoints.dispose();
-    _interleavedPoints.dispose();
     super.dispose();
   }
 
@@ -123,60 +140,23 @@ class _PolygonEditorState extends State<PolygonEditor> {
   }
 
   /// Called when the controller's points change.
-  ///
-  /// This method uses both setState() and ValueNotifier updates because:
-  /// - setState() is needed to rebuild DragMarkers (they don't respond to ValueNotifier)
-  /// - ValueNotifier is used for efficient shape layer updates
   void _onPointsChanged() {
-    // Update midpoints for DragMarkers (requires setState for rebuild)
     setState(() {
       _midpoints = _getMidPoints(widget.controller.points);
     });
-
-    // Update interleaved points for shape rendering (ValueNotifier)
-    _interleavedPoints.value = _interleavePointsAndMidpoints(
-      points: widget.controller.points,
-      midpoints: _midpoints,
-    );
-  }
-
-  /// Updates interleaved points with throttling to maintain performance during dragging.
-  void _throttleUpdateInterleavedPoints() {
-    // If throttling is disabled (Duration.zero), update immediately
-    if (widget.throttleDuration == Duration.zero) {
-      _interleavedPoints.value = _interleavePointsAndMidpoints(
-        points: widget.controller.points,
-        midpoints: _midpoints,
-      );
-      return;
-    }
-
-    // Apply throttling
-    final now = DateTime.now();
-    if (_polygonLastUpdatedAt == null ||
-        now.difference(_polygonLastUpdatedAt!) >= widget.throttleDuration) {
-      _interleavedPoints.value = _interleavePointsAndMidpoints(
-        points: widget.controller.points,
-        midpoints: _midpoints,
-      );
-      _polygonLastUpdatedAt = now;
-    }
   }
 
   /// Calculates midpoints between consecutive points.
-  ///
-  /// For polygon mode, includes midpoint between last and first point.
-  /// For line mode, only includes midpoints between consecutive segments.
+  /// Only used in editing mode.
   List<LatLng> _getMidPoints(List<LatLng> points) {
-    if (points.length < 2) {
+    if (points.length < 2 ||
+        widget.controller.state != PolygonEditingState.editing) {
       return [];
     }
 
     final midPoints = <LatLng>[];
-    final isPolygonMode = widget.controller.mode == PolygonEditorMode.polygon;
-    final segmentCount = isPolygonMode ? points.length : points.length - 1;
 
-    for (var i = 0; i < segmentCount; i++) {
+    for (var i = 0; i < points.length; i++) {
       final current = points[i];
       final next = points[(i + 1) % points.length];
 
@@ -191,68 +171,86 @@ class _PolygonEditorState extends State<PolygonEditor> {
     return midPoints;
   }
 
-  /// Interleaves points and midpoints for rendering the complete shape.
-  List<LatLng> _interleavePointsAndMidpoints({
-    required List<LatLng> points,
-    required List<LatLng> midpoints,
-  }) {
-    if (points.length < 2) {
-      return [];
-    }
-
-    final interleavedPoints = <LatLng>[];
-
-    // Both polygon and line modes use the same interleaving logic
-    // The difference is handled in midpoint calculation, not here
-    for (var i = 0; i < points.length; i++) {
-      interleavedPoints.add(points[i]);
-      if (i < midpoints.length) {
-        interleavedPoints.add(midpoints[i]);
-      }
-    }
-
-    return interleavedPoints;
-  }
-
-  /// Builds the shape layer with efficient ValueListenableBuilder updates.
+  /// Builds the shape layer with different rendering for creating vs editing modes.
   Widget _buildShapeLayer() {
-    if (widget.controller.points.length < 2) {
-      return const SizedBox.shrink();
-    }
+    return ListenableBuilder(
+      listenable: Listenable.merge(
+          [widget.controller, widget.cursorPosition ?? ValueNotifier(null)]),
+      builder: (context, _) {
+        final points = widget.controller.points;
+        if (points.isEmpty) return const SizedBox.shrink();
 
-    return ValueListenableBuilder<List<LatLng>>(
-      valueListenable: _interleavedPoints,
-      builder: (context, interleavedPoints, _) =>
-          _buildShapeForMode(interleavedPoints),
-    );
-  }
+        if (widget.controller.state == PolygonEditingState.creating) {
+          final List<Widget> layers = [];
 
-  /// Builds either a polygon or polyline based on the current mode.
-  Widget _buildShapeForMode(List<LatLng> interleavedPoints) {
-    return widget.controller.mode == PolygonEditorMode.line
-        ? PolylineLayer(
-            polylines: [
-              Polyline(
-                points: interleavedPoints,
-                strokeWidth: widget.style.borderWidth,
-                color: widget.style.borderColor,
+          if (points.length >= 3) {
+            layers.add(
+              PolygonLayer(
+                polygons: [
+                  Polygon(
+                    points: points,
+                    color: widget.style.fillColor,
+                    borderColor: widget.style.borderColor,
+                    borderStrokeWidth: widget.style.borderWidth,
+                  ),
+                ],
               ),
-            ],
-          )
-        : PolygonLayer(
+            );
+          }
+
+          if (widget.cursorPosition?.value != null && points.isNotEmpty) {
+            layers.add(
+              PolylineLayer(
+                polylines: [
+                  Polyline(
+                    points: [points.last, widget.cursorPosition!.value!],
+                    strokeWidth: widget.style.borderWidth,
+                    color: widget.style.borderColor,
+                  ),
+                ],
+              ),
+            );
+          }
+
+          if (points.length >= 2) {
+            layers.insert(
+              0,
+              PolylineLayer(
+                polylines: [
+                  Polyline(
+                    points: points,
+                    strokeWidth: widget.style.borderWidth,
+                    color: widget.style.borderColor,
+                  ),
+                ],
+              ),
+            );
+          }
+
+          return Stack(children: layers);
+        } else {
+          return PolygonLayer(
             polygons: [
               Polygon(
-                points: interleavedPoints,
+                points: points,
                 color: widget.style.fillColor,
                 borderColor: widget.style.borderColor,
                 borderStrokeWidth: widget.style.borderWidth,
               ),
             ],
           );
+        }
+      },
+    );
   }
 
   /// Builds the midpoint markers that can be dragged to create new points.
+  /// Only visible in editing mode.
   Widget _buildMidpointMarkers() {
+    if (widget.controller.state != PolygonEditingState.editing) {
+      return const SizedBox.shrink();
+    }
+
     return ValueListenableBuilder(
       valueListenable: _showMidpoints,
       builder: (context, showMidpoints, _) {
@@ -262,7 +260,9 @@ class _PolygonEditorState extends State<PolygonEditor> {
 
         return DragMarkers(
           markers: _midpoints
-              .mapIndexed((index, point) => _buildMidpointMarker(index, point))
+              .asMap()
+              .entries
+              .map((entry) => _buildMidpointMarker(entry.key, entry.value))
               .toList(),
         );
       },
@@ -277,12 +277,9 @@ class _PolygonEditorState extends State<PolygonEditor> {
       size: widget.style.midpointSize,
       onDragUpdate: (details, point) {
         _midpoints[index] = point;
-        _throttleUpdateInterleavedPoints();
       },
       onDragEnd: (details, latLng) {
-        final insertIndex = widget.controller.mode == PolygonEditorMode.line
-            ? index + 1
-            : (index + 1) % widget.controller.points.length;
+        final insertIndex = (index + 1) % widget.controller.points.length;
         widget.controller.insertPoint(insertIndex, latLng);
       },
       builder: widget.midpointBuilder ?? defaultMidpointBuilder,
@@ -293,30 +290,58 @@ class _PolygonEditorState extends State<PolygonEditor> {
   Widget _buildPointMarkers() {
     return DragMarkers(
       markers: widget.controller.points
-          .mapIndexed((index, point) => _buildPointMarker(index, point))
+          .asMap()
+          .entries
+          .map((entry) => _buildPointMarker(entry.key, entry.value))
           .toList(),
     );
   }
 
-  /// Builds a single point marker with drag and long-press behavior.
+  /// Builds a single point marker with drag and interaction behavior.
   DragMarker _buildPointMarker(int index, LatLng point) {
+    final bool isStartPoint = index == 0;
+    final bool isCreating =
+        widget.controller.state == PolygonEditingState.creating;
+
     return DragMarker(
       key: Key('point_$index'),
       point: point,
       size: widget.style.pointSize,
       onLongPress: (latLng) {
-        widget.controller.removePoint(index);
+        if (!isCreating && widget.controller.points.length > 3) {
+          widget.controller.removePoint(index);
+        }
       },
       onDragStart: (details, _) {
-        _showMidpoints.value = false;
+        if (!isCreating) {
+          _showMidpoints.value = false;
+        }
       },
       onDragUpdate: (details, point) {
         widget.controller.updatePoint(index, point);
       },
       onDragEnd: (details, _) {
-        _showMidpoints.value = true;
+        if (!isCreating) {
+          _showMidpoints.value = true;
+        }
       },
-      builder: widget.pointBuilder ?? defaultPointBuilder,
+      builder: (context, latLng, _) {
+        return GestureDetector(
+          onTap: () {
+            if (isStartPoint &&
+                isCreating &&
+                widget.controller.points.length >= 3) {
+              widget.controller.setState(PolygonEditingState.editing);
+            }
+          },
+          child: (widget.pointBuilder ?? defaultPointBuilder)(
+            context,
+            point,
+            false,
+            isStartPoint && isCreating,
+          ),
+        );
+      },
     );
   }
 }

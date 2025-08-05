@@ -12,10 +12,15 @@ class PolygonEditorExample extends StatefulWidget {
 
 class _PolygonEditorExampleState extends State<PolygonEditorExample> {
   final PolygonEditorController _controller = PolygonEditorController();
+  final ValueNotifier<LatLng?> _cursorPosition = ValueNotifier(null);
+
+  bool _isDraggingPolygon = false;
+  LatLng? _dragStartPosition;
 
   @override
   void dispose() {
     _controller.dispose();
+    _cursorPosition.dispose();
     super.dispose();
   }
 
@@ -24,22 +29,51 @@ class _PolygonEditorExampleState extends State<PolygonEditorExample> {
     return Scaffold(
       body: Stack(
         children: [
-          // Map layer
           FlutterMap(
             options: MapOptions(
-              initialCenter: const LatLng(51.5074, -0.1278), // London
+              initialCenter: const LatLng(51.5074, -0.1278),
               initialZoom: 10,
-              interactionOptions: InteractionOptions(flags: InteractiveFlag.all),
-              onLongPress: (tapPosition, point) {
-                _controller.addPoint(point);
+              interactionOptions:
+                  InteractionOptions(flags: InteractiveFlag.all),
+              onTap: (tapPosition, latLng) {
+                if (_controller.state == PolygonEditingState.creating) {
+                  _controller.addPoint(latLng);
+                } else if (_isDraggingPolygon) {
+                  _isDraggingPolygon = false;
+                  _dragStartPosition = null;
+                }
+              },
+              onLongPress: (tapPosition, latLng) {
+                if (_controller.state == PolygonEditingState.editing &&
+                    _controller.points.length >= 3 &&
+                    _isPointInPolygon(latLng, _controller.points)) {
+                  _isDraggingPolygon = true;
+                  _dragStartPosition = latLng;
+                }
+              },
+              onPointerHover: (event, latLng) {
+                if (_controller.state == PolygonEditingState.creating) {
+                  _cursorPosition.value = latLng;
+                } else if (_isDraggingPolygon && _dragStartPosition != null) {
+                  final latOffset =
+                      latLng.latitude - _dragStartPosition!.latitude;
+                  final lngOffset =
+                      latLng.longitude - _dragStartPosition!.longitude;
+                  _controller.movePolygon(latOffset, lngOffset);
+                  _dragStartPosition = latLng;
+                }
               },
             ),
             children: [
               TileLayer(
                 urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                userAgentPackageName: 'com.example.flutter_map_polygon_editor',
+                userAgentPackageName:
+                    'com.example.flutter_map_polygon_editor',
               ),
-              PolygonEditor(controller: _controller),
+              PolygonEditor(
+                controller: _controller,
+                cursorPosition: _cursorPosition,
+              ),
             ],
           ),
 
@@ -49,34 +83,37 @@ class _PolygonEditorExampleState extends State<PolygonEditorExample> {
             right: 16,
             child: Column(
               children: [
-                // Mode toggle button
+                // State toggle button
                 ListenableBuilder(
                   listenable: _controller,
                   builder: (context, child) => FloatingActionButton(
-                    heroTag: "mode_toggle",
+                    heroTag: "state_toggle",
                     onPressed: () {
-                      _controller.setMode(
-                        _controller.mode == PolygonEditorMode.polygon
-                            ? PolygonEditorMode.line
-                            : PolygonEditorMode.polygon,
+                      _controller.setState(
+                        _controller.state == PolygonEditingState.creating
+                            ? PolygonEditingState.editing
+                            : PolygonEditingState.creating,
                       );
                     },
-                    tooltip: _controller.mode == PolygonEditorMode.polygon
-                        ? 'Switch to Line Mode'
-                        : 'Switch to Polygon Mode',
+                    tooltip: _controller.state == PolygonEditingState.creating
+                        ? 'Switch to Edit Mode'
+                        : 'Switch to Create Mode',
                     child: Icon(
-                      _controller.mode == PolygonEditorMode.polygon
-                          ? Icons.polyline
-                          : Icons.rectangle_outlined,
+                      _controller.state == PolygonEditingState.creating
+                          ? Icons.edit
+                          : Icons.add_location,
                     ),
                   ),
                 ),
                 const SizedBox(height: 12),
-                
+
                 // Clear button
                 FloatingActionButton(
                   heroTag: "clear",
-                  onPressed: () => _controller.clear(),
+                  onPressed: () {
+                    _controller.clear();
+                    _controller.setState(PolygonEditingState.creating);
+                  },
                   tooltip: 'Clear all points',
                   backgroundColor: Colors.red,
                   foregroundColor: Colors.white,
@@ -114,9 +151,11 @@ class _PolygonEditorExampleState extends State<PolygonEditorExample> {
                       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                       children: [
                         _buildInfoChip(
-                          'Mode',
-                          _controller.mode.name.toUpperCase(),
-                          Icons.edit_location,
+                          'State',
+                          _controller.state.name.toUpperCase(),
+                          _controller.state == PolygonEditingState.creating
+                              ? Icons.add_location
+                              : Icons.edit,
                         ),
                         _buildInfoChip(
                           'Points',
@@ -127,10 +166,12 @@ class _PolygonEditorExampleState extends State<PolygonEditorExample> {
                     ),
                     const SizedBox(height: 12),
                     Text(
-                      'Long press map to add point • Long press point to remove • Drag midpoints to insert',
+                      _controller.state == PolygonEditingState.creating
+                          ? 'Tap map to add point • Tap green start point to finish'
+                          : 'Drag points to move • Long press point to remove • Drag midpoints to insert • Long press inside polygon to move it',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Colors.grey[600],
-                      ),
+                            color: Colors.grey[600],
+                          ),
                       textAlign: TextAlign.center,
                     ),
                   ],
@@ -141,6 +182,30 @@ class _PolygonEditorExampleState extends State<PolygonEditorExample> {
         ],
       ),
     );
+  }
+
+  /// Simple point-in-polygon test using ray casting algorithm
+  bool _isPointInPolygon(LatLng point, List<LatLng> polygon) {
+    if (polygon.length < 3) return false;
+
+    bool inside = false;
+    int j = polygon.length - 1;
+
+    for (int i = 0; i < polygon.length; i++) {
+      final xi = polygon[i].latitude;
+      final yi = polygon[i].longitude;
+      final xj = polygon[j].latitude;
+      final yj = polygon[j].longitude;
+
+      if (((yi > point.longitude) != (yj > point.longitude)) &&
+          (point.latitude <
+              (xj - xi) * (point.longitude - yi) / (yj - yi) + xi)) {
+        inside = !inside;
+      }
+      j = i;
+    }
+
+    return inside;
   }
 
   Widget _buildInfoChip(String label, String value, IconData icon) {

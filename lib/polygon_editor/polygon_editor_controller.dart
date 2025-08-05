@@ -1,39 +1,41 @@
 import 'package:flutter/foundation.dart';
 import 'package:latlong2/latlong.dart';
 
-/// The editing mode for the polygon editor.
-enum PolygonEditorMode { 
-  /// Line mode creates polylines (open paths).
-  line, 
-  /// Polygon mode creates closed shapes.
-  polygon 
+/// The editing state for the polygon editor.
+enum PolygonEditingState {
+  /// The user is actively creating a new polygon by adding points.
+  creating,
+
+  /// The user is editing a closed polygon.
+  editing,
 }
 
-/// Controller for managing polygon and polyline editing state.
-/// 
-/// Extends [ChangeNotifier] to provide reactive updates when points or mode change.
+/// Controller for managing polygon editing state.
+///
+/// Extends [ChangeNotifier] to provide reactive updates when points or state change.
 class PolygonEditorController extends ChangeNotifier {
   List<LatLng> _points = [];
-  PolygonEditorMode _mode;
+  PolygonEditingState _state;
 
-  /// Creates a new controller with the specified editing mode.
-  /// 
-  /// Defaults to [PolygonEditorMode.polygon] if no mode is provided.
-  PolygonEditorController({PolygonEditorMode mode = PolygonEditorMode.polygon}) 
-    : _mode = mode;
+  /// Creates a new controller with the specified editing state.
+  ///
+  /// Defaults to [PolygonEditingState.creating] if no state is provided.
+  PolygonEditorController(
+      {PolygonEditingState initialState = PolygonEditingState.creating})
+      : _state = initialState;
 
-  /// The current list of points forming the polygon or polyline.
+  /// The current list of points forming the polygon.
   List<LatLng> get points => _points;
-  
-  /// The current editing mode (polygon or line).
-  PolygonEditorMode get mode => _mode;
 
-  /// Changes the editing mode and notifies listeners.
-  /// 
-  /// Only notifies if the mode actually changes.
-  void setMode(PolygonEditorMode mode) {
-    if (_mode != mode) {
-      _mode = mode;
+  /// The current editing state (creating or editing).
+  PolygonEditingState get state => _state;
+
+  /// Changes the editing state and notifies listeners.
+  ///
+  /// Only notifies if the state actually changes.
+  void setState(PolygonEditingState newState) {
+    if (_state != newState) {
+      _state = newState;
       notifyListeners();
     }
   }
@@ -45,7 +47,7 @@ class PolygonEditorController extends ChangeNotifier {
   }
 
   /// Inserts a point at the specified index.
-  /// 
+  ///
   /// The [index] must be between 0 and [points.length] (inclusive).
   /// Does nothing if the index is out of bounds.
   void insertPoint(int index, LatLng point) {
@@ -56,7 +58,7 @@ class PolygonEditorController extends ChangeNotifier {
   }
 
   /// Updates the point at the specified index with a new position.
-  /// 
+  ///
   /// Does nothing if the index is out of bounds.
   void updatePoint(int index, LatLng point) {
     if (index >= 0 && index < _points.length) {
@@ -66,7 +68,7 @@ class PolygonEditorController extends ChangeNotifier {
   }
 
   /// Removes the point at the specified index.
-  /// 
+  ///
   /// Does nothing if the index is out of bounds.
   void removePoint(int index) {
     if (index >= 0 && index < _points.length) {
@@ -76,7 +78,7 @@ class PolygonEditorController extends ChangeNotifier {
   }
 
   /// Removes and returns the last point from the list.
-  /// 
+  ///
   /// Returns null if the list is empty.
   LatLng? removeLast() {
     if (_points.isNotEmpty) {
@@ -94,10 +96,23 @@ class PolygonEditorController extends ChangeNotifier {
   }
 
   /// Replaces all points with a new list of points.
-  /// 
+  ///
   /// Creates a copy of the provided list to avoid external modifications.
   void setPoints(List<LatLng> points) {
     _points = [...points];
+    notifyListeners();
+  }
+
+  /// Moves all points by the specified offset in latitude and longitude.
+  ///
+  /// This can be used to implement polygon dragging functionality.
+  void movePolygon(double latOffset, double lngOffset) {
+    _points = _points
+        .map((point) => LatLng(
+              point.latitude + latOffset,
+              point.longitude + lngOffset,
+            ))
+        .toList();
     notifyListeners();
   }
 }

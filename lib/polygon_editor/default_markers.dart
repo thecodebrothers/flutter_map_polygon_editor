@@ -2,23 +2,32 @@ import 'package:flutter/material.dart';
 import 'package:latlong2/latlong.dart';
 
 /// Default point marker widget - blue circle with white border and shadow.
+/// Green circle when it's the start point during creation.
 ///
 /// This is the default implementation for point markers used in the polygon editor.
 /// The marker changes appearance when being dragged to provide visual feedback.
 class DefaultPointMarker extends StatelessWidget {
   const DefaultPointMarker({
     required this.isDragging,
+    this.isStartPoint = false,
     super.key,
   });
 
   /// Whether this marker is currently being dragged.
   final bool isDragging;
 
+  /// Whether this marker is the start point during creation mode.
+  final bool isStartPoint;
+
   @override
   Widget build(BuildContext context) {
+    final color = isStartPoint ? Colors.green : Colors.blue;
+    final dragColor =
+        isStartPoint ? Colors.green.shade700 : Colors.blue.shade700;
+
     return Container(
       decoration: BoxDecoration(
-        color: isDragging ? Colors.blue.shade700 : Colors.blue,
+        color: isDragging ? dragColor : color,
         shape: BoxShape.circle,
         border: Border.all(color: Colors.white, width: 2),
         boxShadow: const [
@@ -75,8 +84,12 @@ Widget defaultPointBuilder(
   BuildContext context,
   LatLng position,
   bool isDragging,
+  bool isStartPoint,
 ) {
-  return DefaultPointMarker(isDragging: isDragging);
+  return DefaultPointMarker(
+    isDragging: isDragging,
+    isStartPoint: isStartPoint,
+  );
 }
 
 /// Default midpoint builder function for the polygon editor.
